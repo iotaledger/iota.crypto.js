@@ -37,15 +37,14 @@ gulp.task('nsp', function (cb) {
     Build for the browser
 **/
 gulp.task('dist', function() {
-    return browserify("./iota-browser.js")
+    return browserify("./iota-crypto-browser.js")
         .bundle()
-        .pipe(source('iota.js'))
+        .pipe(source('iota.crypto.js'))
         .pipe(gulp.dest(DEST))
-        .pipe(rename('iota.min.js'))
+        .pipe(rename('iota.crypto.min.js'))
         .pipe(buffer())
         .pipe(uglify())
         .pipe(gulp.dest(DEST));
 });
-
 
 gulp.task('default', ['lint', 'clean', 'nsp', 'dist']);

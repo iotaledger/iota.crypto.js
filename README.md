@@ -1,10 +1,12 @@
-# IOTA Javascript Library
+# IOTA Crypto Javascript Library
 
-[![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://raw.githubusercontent.com/iotaledger/iota.lib.js/master/LICENSE) [![Build Status](https://travis-ci.org/iotaledger/iota.lib.js.svg?branch=master)](https://travis-ci.org/iotaledger/iota.lib.js) [![dependencies Status](https://david-dm.org/iotaledger/iota.lib.js/status.svg)](https://david-dm.org/iotaledger/iota.lib.js)  [![devDependencies Status](https://david-dm.org/iotaledger/iota.lib.js/dev-status.svg)](https://david-dm.org/iotaledger/iota.lib.js?type=dev) [![NSP Status](https://nodesecurity.io/orgs/iota-foundation/projects/7c0214b5-e36a-4178-92bc-164c536cfd6c/badge)](https://nodesecurity.io/orgs/iota-foundation/projects/7c0214b5-e36a-4178-92bc-164c536cfd6c)
+[![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://raw.githubusercontent.com/iotaledger/iota.crypto.js/master/LICENSE) [![Build Status](https://travis-ci.org/iotaledger/iota.crypto.js.svg?branch=master)](https://travis-ci.org/iotaledger/iota.crypto.js) [![dependencies Status](https://david-dm.org/iotaledger/iota.crypto.js/status.svg)](https://david-dm.org/iotaledger/iota.crypto.js)  [![devDependencies Status](https://david-dm.org/iotaledger/iota.crypto.js/dev-status.svg)](https://david-dm.org/iotaledger/iota.crypto.js?type=dev) [![NSP Status](https://nodesecurity.io/orgs/iota-foundation/projects/7c0214b5-e36a-4178-92bc-164c536cfd6c/badge)](https://nodesecurity.io/orgs/iota-foundation/projects/7c0214b5-e36a-4178-92bc-164c536cfd6c)
 
-This is the official Javascript library for the IOTA Core. It implements both the [official API](https://iota.readme.io/), as well as newly proposed functionality (such as signing, bundles, utilities and conversion).
+### Readme is still in the works
 
-It should be noted that the Javascript Library as it stands right now is an **early beta release**. As such, there might be some unexpected results. Please join the community (see links below) and post [issues on here](https://github.com/iotaledger/iota.lib.js/issues), to ensure that the developers of the library can improve it.
+This is the official Javascript Crypto library for the IOTA Core. It implements the newly proposed functionality (such as signing, bundles, utilities and conversion).
+
+It should be noted that the Javascript Library as it stands right now is an **early beta release**. As such, there might be some unexpected results. Please join the community (see links below) and post [issues on here](https://github.com/iotaledger/iota.crypto.js/issues), to ensure that the developers of the library can improve it.
 
 > **Join the Discussion**
 
@@ -15,16 +17,16 @@ It should be noted that the Javascript Library as it stands right now is an **ea
 ### Node.js
 
 ```
-npm install iota.lib.js
+npm install iota.crypto.js
 ```
 
 ### Bower
 
 ```
-bower install iota.lib.js
+bower install iota.crypto.js
 ```
 
-Once you've built the dist with gulp, you can either use `iota.js` or the minified version `iota.min.js` in the browser.
+Once you've built the dist with gulp, you can either use `iota.crypto.js` or the minified version `iota.crypto.min.js` in the browser.
 
 ---
 
@@ -46,27 +48,7 @@ The optional settings object can have the following values:
 
 You can either supply the remote node directly via the `provider` option, or individually with `host` and `port`, as can be seen in the example below:
 
-```
-// Create IOTA instance with host and port as provider
-var iota = new IOTA({
-    'host': 'http://localhost',
-    'port': 14265
-});
-
-// Create IOTA instance directly with provider
-var iota = new IOTA({
-    'provider': 'http://localhost:14265'
-});
-
-// now you can start using all of the functions
-iota.api.getNodeInfo();
-
-// you can also get the version
-iota.version
-```
-
 Overall, there are currently four subclasses that are accessible from the IOTA object:
-- **`api`**: Core API functionality for interacting with the IOTA core.
 - **`utils`**: Utility related functions for conversions, validation and so on  
 - **`multisig`**: Functions for creating and signing multi-signature addresses and transactions.
 - **`valid`**: Validator functions that can help with determining whether the inputs or results that you get are valid.
@@ -82,37 +64,10 @@ It should be noted that most API calls are done asynchronously. What this means 
 
 Here is a simple example of how to access the `getNodeInfo` function:
 
-```
-iota.api.getNodeInfo(function(error, success) {
-    if (error) {
-        console.error(error);
-    } else {
-        console.log(success);
-    }
-})
-```
-
 ---
 
 ## API Table of Contents		
 
-- **[api](#api)**
-    - **[Standard API](#standard-api)**
-    - **[getTransactionsObjects](#gettransactionsobjects)**
-    - **[findTransactionObjects](#findtransactionobjects)**
-    - **[getLatestInclusion](#getlatestinclusion)**
-    - **[broadcastAndStore](#broadcastandstore)**
-    - **[getNewAddress](#getnewaddress)**
-    - **[getInputs](#getinputs)**
-    - **[prepareTransfers](#preparetransfers)**
-    - **[sendTrytes](#sendtrytes)**
-    - **[sendTransfer](#sendtransfer)**
-    - **[replayBundle](#replaybundle)**
-    - **[broadcastBundle](#broadcastbundle)**
-    - **[getBundle](#getbundle)**
-    - **[getTransfers](#gettransfers)**
-    - **[getAccountData](#getaccountdata)**
-    - **[isReattachable](#isreattachable)**
 - **[utils](#iota.utils)**
     - **[convertUnits](#convertunits)**
     - **[addChecksum](#addchecksum)**
@@ -151,102 +106,6 @@ iota.api.getNodeInfo(function(error, success) {
     - **[isArray](#isarray)**
     - **[isObject](#isobject)**
     - **[isUri](#isuri)**
-
----
-
-## `iota.api`
-
-### `Standard API`
-
-This Javascript library has implemented all of the core API calls that are made available by the current [IOTA Reference Implementation](https://github.com/iotaledger/iri). For the full documentation of all the Standard API calls, please refer to the official documentation: [official API](https://iota.readme.io/).
-
-You can simply use any of the available options from the `api` object then. For example, if you want to use the `getTips` function, you would simply do it as such:
-
-```
-iota.api.getTips(function(error, success) {
-    // do stuff here
-})
-```
-
----
-
-### `getTransactionsObjects`
-
-Wrapper function for `getTrytes` and the Utility function `transactionObjects`. This function basically returns the entire transaction objects for a list of transaction hashes.
-
-
-#### Input
-```
-iota.api.getTransactionsObjects(hashes, callback)
-```
-
-1. **`hashes`**: `Array` List of transaction hashes
-2. **`callback`**: `Function` callback.
-
-#### Return Value
-
-1. **`Array`** - list of all the transaction objects from the corresponding hashes.
-
----
-
-### `findTransactionObjects`
-
-Wrapper function for `findTransactions`, `getTrytes` and the Utility function `transactionObjects`. This function basically returns the entire transaction objects for a list of key values which you would usually use for `findTransactions`. Acceptable key values are:
-
-- *`bundles`*: List of bundle hashes
-- *`addresses`*: List of addresses
-- *`tags`*: List of transaction tags (27 trytes length)
-- *`approvees`*: List of approvees
-
-
-#### Input
-```
-iota.api.findTransactionObjects(searchValues, callback)
-```
-
-1. **`searchValues`**: `Object` List of transaction hashes. e.g. `{'hashes': ['ABCD']}`
-2. **`callback`**: `Function` callback.
-
-#### Return Value
-
-1. **`Array`** - list of all the transaction objects from the corresponding hashes.
-
----
-
-### `getLatestInclusion`
-
-Wrapper function for `getNodeInfo` and `getInclusionStates`. It simply takes the most recent solid milestone as returned by getNodeInfo, and uses it to get the inclusion states of a list of transaction hashes.
-
-
-#### Input
-```
-iota.api.getLatestInclusion(hashes, callback)
-```
-
-1. **`hashes`**: `Array` List of transaction hashes
-2. **`callback`**: `Function` callback.
-
-#### Return Value
-
-1. **`Array`** - list of all the inclusion states of the transaction hashes
-
----
-
-### `broadcastAndStore`
-
-Wrapper function for `broadcastTransactions` and `storeTransactions`.
-
-#### Input
-```
-iota.api.broadcastAndStore(trytes, callback)
-```
-
-1. **`trytes`**: `Array` List of transaction trytes to be broadcast and stored. Has to be trytes that were returned from `attachToTangle`
-2. **`callback`**: `Function` callback.
-
-#### Return Value
-
-**`Object`** - empty object.
 
 ---
 

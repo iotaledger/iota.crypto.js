@@ -1132,6 +1132,16 @@ var Bundle = require("../bundle/bundle");
 var add = require("../helpers/adder");
 var oldSigning = require("./oldSigning");
 
+var getSubseed = function(seed, index) {
+    var subseed = add( seed.slice( ), Converter.fromValue(index));
+
+    var kerl = new Kerl( );
+
+    kerl.initialize( );
+    kerl.absorb(subseed, 0, subseed.length);
+    kerl.squeeze(subseed, 0, subseed.length);
+}
+
 /**
 *           Signing related functions
 *
@@ -1142,16 +1152,11 @@ var key = function(seed, index, length) {
       seed.push(0);
     }
 
-    var indexTrits = Converter.fromValue( index );
-    var subseed = add( seed.slice( ), indexTrits );
+    var subseed = getSubseed(seed, index);
 
     var kerl = new Kerl( );
 
     kerl.initialize( );
-    kerl.absorb(subseed, 0, subseed.length);
-    kerl.squeeze(subseed, 0, subseed.length);
-
-    kerl.reset( );
     kerl.absorb(subseed, 0, subseed.length);
 
     var key = [], offset = 0, buffer = [];
@@ -1357,6 +1362,7 @@ var validateSignatures = function(expectedAddress, signatureFragments, bundleHas
 
 
 module.exports = {
+    subseed             : getSubseed,
     key                 : key,
     digests             : digests,
     address             : address,

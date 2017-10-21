@@ -3,8 +3,10 @@
 window.IOTA = require('./lib/iota.crypto.js');
 
 },{"./lib/iota.crypto.js":12}],2:[function(require,module,exports){
+var Curl = require("../curl/curl");
 var Kerl = require("../kerl/kerl");
 var Converter = require("../converter/converter");
+var tritAdd = require("../helpers/adder");
 
 /**
 *
@@ -28,6 +30,7 @@ Bundle.prototype.addEntry = function(signatureMessageLength, address, value, tag
         var transactionObject = new Object();
         transactionObject.address = address;
         transactionObject.value = i == 0 ? value : 0;
+        transactionObject.obsoleteTag = tag;
         transactionObject.tag = tag;
         transactionObject.timestamp = timestamp;
 
@@ -43,6 +46,8 @@ Bundle.prototype.addTrytes = function(signatureFragments) {
 
     var emptySignatureFragment = '';
     var emptyHash = '999999999999999999999999999999999999999999999999999999999999999999999999999999999';
+    var emptyTag = '9'.repeat(27);
+    var emptyTimestamp = '9'.repeat(9);
 
     for (var j = 0; emptySignatureFragment.length < 2187; j++) {
         emptySignatureFragment += '9';
@@ -59,8 +64,11 @@ Bundle.prototype.addTrytes = function(signatureFragments) {
         // Fill empty branchTransaction
         this.bundle[i].branchTransaction = emptyHash;
 
+        this.bundle[i].attachmentTimestamp = emptyTimestamp;
+        this.bundle[i].attachmentTimestampLowerBound = emptyTimestamp;
+        this.bundle[i].attachmentTimestampUpperBound = emptyTimestamp;
         // Fill empty nonce
-        this.bundle[i].nonce = emptyHash;
+        this.bundle[i].nonce = emptyTag;
     }
 }
 
@@ -70,6 +78,9 @@ Bundle.prototype.addTrytes = function(signatureFragments) {
 *
 **/
 Bundle.prototype.finalize = function() {
+    var validBundle = false;
+
+  while(!validBundle) {
 
     var kerl = new Kerl();
     kerl.initialize();
@@ -96,18 +107,28 @@ Bundle.prototype.finalize = function() {
             lastIndexTrits[lastIndexTrits.length] = 0;
         }
 
-        var bundleEssence = Converter.trits(this.bundle[i].address + Converter.trytes(valueTrits) + this.bundle[i].tag + Converter.trytes(timestampTrits) + Converter.trytes(currentIndexTrits) + Converter.trytes(lastIndexTrits));
+        var bundleEssence = Converter.trits(this.bundle[i].address + Converter.trytes(valueTrits) + this.bundle[i].obsoleteTag + Converter.trytes(timestampTrits) + Converter.trytes(currentIndexTrits) + Converter.trytes(lastIndexTrits));
         kerl.absorb(bundleEssence, 0, bundleEssence.length);
     }
 
     var hash = [];
-    kerl.squeeze(hash, 0, kerl.HASH_LENGTH);
+    kerl.squeeze(hash, 0, Curl.HASH_LENGTH);
     hash = Converter.trytes(hash);
 
     for (var i = 0; i < this.bundle.length; i++) {
 
         this.bundle[i].bundle = hash;
     }
+
+    var normalizedHash = this.normalizedBundle(hash);
+    if(normalizedHash.indexOf(13 /* = M */) != -1) {
+      // Insecure bundle. Increment Tag and recompute bundle hash.
+      var increasedTag = tritAdd(Converter.trits(this.bundle[0].obsoleteTag), [1]);
+      this.bundle[0].obsoleteTag = Converter.trytes(increasedTag);
+    } else {
+      validBundle = true;
+    }
+  }
 }
 
 /**
@@ -160,7 +181,7 @@ Bundle.prototype.normalizedBundle = function(bundleHash) {
 
 module.exports = Bundle;
 
-},{"../converter/converter":3,"../kerl/kerl":8}],3:[function(require,module,exports){
+},{"../converter/converter":3,"../curl/curl":5,"../helpers/adder":6,"../kerl/kerl":8}],3:[function(require,module,exports){
 /**
  *
  *   Conversion functions
@@ -361,7 +382,7 @@ var INT_LENGTH = 12;
 var BYTE_LENGTH = 48;
 var RADIX = 3;
 /// hex representation of (3^242)/2
-var HALF_3 = Uint32Array.from([
+var HALF_3 = new Uint32Array([
     0xa5ce8964,
     0x9f007669,
     0x1484504f,
@@ -375,6 +396,39 @@ var HALF_3 = Uint32Array.from([
     0xa87fabdf,
     0x5e69ebef
 ]);
+
+var clone_uint32Array = function(sourceArray) {
+  var destination = new ArrayBuffer(sourceArray.byteLength);
+  new Uint32Array(destination).set(new Uint32Array(sourceArray));
+
+  return destination;
+};
+
+var ta_slice = function(array) {
+  if (array.slice !== undefined) {
+      return array.slice();
+  }
+
+  return clone_uint32Array(array);
+};
+
+var ta_reverse = function(array) {
+  if (array.reverse !== undefined) {
+    array.reverse();
+    return;
+  }
+
+  var i = 0,
+    n = array.length,
+    middle = Math.floor(n / 2),
+    temp = null;
+
+  for (; i < middle; i += 1) {
+    temp = array[i];
+    array[i] = array[n - 1 - i];
+    array[n - 1 - i] = temp;
+  }
+};
 
 /// negates the (unsigned) input array
 var bigint_not = function(arr) {
@@ -479,9 +533,9 @@ var words_to_trits = function(words) {
     }
 
     var trits = new Int8Array(243);
-    var base = Uint32Array.from(words);
+    var base = new Uint32Array(words);
 
-    base.reverse();
+    ta_reverse(base);
 
     var flip_trits = false;
     if (base[INT_LENGTH - 1] >> 31 == 0) {
@@ -497,7 +551,7 @@ var words_to_trits = function(words) {
         } else {
             /// bigint is between (unsigned) HALF_3 and (2**384 - 3**242/2).
             bigint_add_small(base, 1);
-            var tmp = HALF_3.slice(0);
+            var tmp = ta_slice(HALF_3);
             bigint_sub(tmp, base);
             base = tmp;
         }
@@ -548,8 +602,10 @@ var trits_to_words = function(trits) {
 
     var base = new Uint32Array(INT_LENGTH);
 
-    if (trits.slice(0, 242).every(function(a) {a == -1})) {
-        base = HALF_3.slice(0);
+    if (trits.slice(0, 242).every(function(a) {
+            a == -1
+        })) {
+        base = ta_slice(HALF_3);
         bigint_not(base);
         bigint_add_small(base, 1);
     } else {
@@ -593,7 +649,7 @@ var trits_to_words = function(trits) {
                 // so we need to transform it to a two's complement representation
                 // of (base - HALF_3).
                 // as we don't have a wrapping (-), we need to use some bit magic
-                var tmp = HALF_3.slice(0);
+                var tmp = ta_slice(HALF_3);
                 bigint_sub(tmp, base);
                 bigint_not(tmp);
                 bigint_add_small(tmp, 1);
@@ -602,7 +658,7 @@ var trits_to_words = function(trits) {
         }
     }
 
-    base.reverse();
+    ta_reverse(base);
 
     for (var i = 0; i < base.length; i++) {
         base[i] = swap32(base[i]);
@@ -623,15 +679,24 @@ var Converter = require("../converter/converter");
 **      Cryptographic related functions to IOTA's Curl (sponge function)
 **/
 
-function Curl() {
+var NUMBER_OF_ROUNDS = 81;
+var HASH_LENGTH = 243;
+var STATE_LENGTH = 3 * HASH_LENGTH;
 
+function Curl(rounds) {
+    if (rounds) {
+      this.rounds = rounds;
+    } else {
+      this.rounds = NUMBER_OF_ROUNDS;
+    }
     // truth table
-    this.truthTable = [1, 0, -1, 1, -1, 0, -1, 1, 0];
-    this.HASH_LENGTH = 243;
+    this.truthTable = [1, 0, -1, 2, 1, -1, 0, 2, -1, 1, 0];
 }
 
+Curl.HASH_LENGTH = HASH_LENGTH;
+
 /**
-*   Initializes the state with 729 trits
+*   Initializes the state with STATE_LENGTH trits
 *
 *   @method initialize
 **/
@@ -645,12 +710,16 @@ Curl.prototype.initialize = function(state, length) {
 
         this.state = [];
 
-        for (var i = 0; i < 729; i++) {
+        for (var i = 0; i < STATE_LENGTH; i++) {
 
             this.state[i] = 0;
 
         }
     }
+}
+
+Curl.prototype.reset = function() {
+  this.initialize();
 }
 
 /**
@@ -663,7 +732,7 @@ Curl.prototype.absorb = function(trits, offset, length) {
     do {
 
         var i = 0;
-        var limit = (length < 243 ? length : 243);
+        var limit = (length < HASH_LENGTH ? length : HASH_LENGTH);
 
         while (i < limit) {
 
@@ -672,7 +741,7 @@ Curl.prototype.absorb = function(trits, offset, length) {
 
         this.transform();
 
-    } while (( length -= 243 ) > 0)
+    } while (( length -= HASH_LENGTH ) > 0)
 
 }
 
@@ -686,7 +755,7 @@ Curl.prototype.squeeze = function(trits, offset, length) {
     do {
 
         var i = 0;
-        var limit = (length < 243 ? length : 243);
+        var limit = (length < HASH_LENGTH ? length : HASH_LENGTH);
 
         while (i < limit) {
 
@@ -695,7 +764,7 @@ Curl.prototype.squeeze = function(trits, offset, length) {
 
         this.transform();
 
-    } while (( length -= 243 ) > 0)
+    } while (( length -= HASH_LENGTH ) > 0)
 }
 
 /**
@@ -707,13 +776,13 @@ Curl.prototype.transform = function() {
 
     var stateCopy = [], index = 0;
 
-    for (var round = 0; round < 27; round++) {
+    for (var round = 0; round < this.rounds; round++) {
 
         stateCopy = this.state.slice();
 
-        for (var i = 0; i < 729; i++) {
+        for (var i = 0; i < STATE_LENGTH; i++) {
 
-            this.state[i] = this.truthTable[stateCopy[index] + stateCopy[index += (index < 365 ? 364 : -365)] * 3 + 4];
+            this.state[i] = this.truthTable[stateCopy[index] + (stateCopy[index += (index < 365 ? 364 : -365)] << 2) + 5];
         }
     }
 }
@@ -801,18 +870,19 @@ module.exports = add;
 },{}],7:[function(require,module,exports){
 var Curl = require("../curl/curl");
 var Converter = require("../converter/converter");
+var HMAC_ROUNDS = 27;
 
 function hmac(key) {
     this._key = Converter.trits(key);
 }
 
 hmac.prototype.addHMAC = function(bundle) {
-    var curl = new Curl();
+    var curl = new Curl(HMAC_ROUNDS);
     var key = this._key;
     for(var i = 0; i < bundle.bundle.length; i++) {
         if (bundle.bundle[i].value > 0) {
             var bundleHashTrits = Converter.trits(bundle.bundle[i].bundle);
-            var hmac = new Int32Array(243);
+            var hmac = new Int8Array(243);
             curl.initialize();
             curl.absorb(key);
             curl.absorb(bundleHashTrits);
@@ -828,18 +898,22 @@ module.exports = hmac;
 },{"../converter/converter":3,"../curl/curl":5}],8:[function(require,module,exports){
 var CryptoJS = require("crypto-js");
 var Converter = require("../converter/converter");
+var Curl = require("../curl/curl");
 var WConverter = require("../converter/words");
+
+var BIT_HASH_LENGTH = 384;
 
 function Kerl() {
 
-    this.HASH_LENGTH = 243;
-    this.BIT_HASH_LENGTH = 384;
 
     this.k = CryptoJS.algo.SHA3.create();
     this.k.init({
-        outputLength: this.BIT_HASH_LENGTH
+        outputLength: BIT_HASH_LENGTH
     });
 }
+
+Kerl.BIT_HASH_LENGTH = BIT_HASH_LENGTH;
+Kerl.HASH_LENGTH = Curl.HASH_LENGTH;
 
 Kerl.prototype.initialize = function(state) {}
 
@@ -859,7 +933,7 @@ Kerl.prototype.absorb = function(trits, offset, length) {
     }
 
     do {
-        var limit = (length < this.HASH_LENGTH ? length : this.HASH_LENGTH);
+        var limit = (length < Curl.HASH_LENGTH ? length : Curl.HASH_LENGTH);
 
         var trit_state = trits.slice(offset, offset + limit);
         offset += limit;
@@ -871,7 +945,7 @@ Kerl.prototype.absorb = function(trits, offset, length) {
         this.k.update(
             CryptoJS.lib.WordArray.create(wordsToAbsorb));
 
-    } while ((length -= this.HASH_LENGTH) > 0);
+    } while ((length -= Curl.HASH_LENGTH) > 0);
 
 }
 
@@ -894,7 +968,7 @@ Kerl.prototype.squeeze = function(trits, offset, length) {
         var trit_state = WConverter.words_to_trits(final.words);
 
         var i = 0;
-        var limit = (length < this.HASH_LENGTH ? length : this.HASH_LENGTH);
+        var limit = (length < Curl.HASH_LENGTH ? length : Curl.HASH_LENGTH);
 
         while (i < limit) {
             trits[offset++] = trit_state[i++];
@@ -908,12 +982,12 @@ Kerl.prototype.squeeze = function(trits, offset, length) {
 
         this.k.update(final);
 
-    } while ((length -= this.HASH_LENGTH) > 0);
+    } while ((length -= Curl.HASH_LENGTH) > 0);
 }
 
 module.exports = Kerl;
 
-},{"../converter/converter":3,"../converter/words":4,"crypto-js":27}],9:[function(require,module,exports){
+},{"../converter/converter":3,"../converter/words":4,"../curl/curl":5,"crypto-js":27}],9:[function(require,module,exports){
 var Curl = require("../curl/curl");
 var Converter = require("../converter/converter");
 var Bundle = require("../bundle/bundle");
@@ -938,7 +1012,7 @@ var key = function(seed, index, length) {
     curl.absorb(subseed, 0, subseed.length);
     curl.squeeze(subseed, 0, subseed.length);
 
-    curl.reset( );
+    curl.initialize( );
     curl.absorb(subseed, 0, subseed.length);
 
     var key = [], offset = 0, buffer = [];
@@ -978,7 +1052,7 @@ var digests = function(key) {
                 var kCurl = new Curl();
                 kCurl.initialize();
                 kCurl.absorb(buffer, 0, buffer.length);
-                kCurl.squeeze(buffer, 0, kCurl.HASH_LENGTH);
+                kCurl.squeeze(buffer, 0, Curl.HASH_LENGTH);
             }
 
             for (var k = 0; k < 243; k++) {
@@ -991,7 +1065,7 @@ var digests = function(key) {
 
         curl.initialize();
         curl.absorb(keyFragment, 0, keyFragment.length);
-        curl.squeeze(buffer, 0, curl.HASH_LENGTH);
+        curl.squeeze(buffer, 0, Curl.HASH_LENGTH);
 
         for (var j = 0; j < 243; j++) {
 
@@ -1013,7 +1087,7 @@ var address = function(digests) {
 
     curl.initialize();
     curl.absorb(digests, 0, digests.length);
-    curl.squeeze(addressTrits, 0, curl.HASH_LENGTH);
+    curl.squeeze(addressTrits, 0, Curl.HASH_LENGTH);
 
     return addressTrits;
 }
@@ -1039,13 +1113,13 @@ var digest = function(normalizedBundleFragment, signatureFragment) {
 
             jCurl.initialize();
             jCurl.absorb(buffer, 0, buffer.length);
-            jCurl.squeeze(buffer, 0, jCurl.HASH_LENGTH);
+            jCurl.squeeze(buffer, 0, Curl.HASH_LENGTH);
         }
 
         curl.absorb(buffer, 0, buffer.length);
     }
 
-    curl.squeeze(buffer, 0, curl.HASH_LENGTH);
+    curl.squeeze(buffer, 0, Curl.HASH_LENGTH);
     return buffer;
 }
 
@@ -1066,9 +1140,8 @@ var signatureFragment = function(normalizedBundleFragment, keyFragment) {
         for (var j = 0; j < 13 - normalizedBundleFragment[i]; j++) {
 
             curl.initialize();
-            curl.reset();
             curl.absorb(hash, 0, hash.length);
-            curl.squeeze(hash, 0, curl.HASH_LENGTH);
+            curl.squeeze(hash, 0, Curl.HASH_LENGTH);
         }
 
         for (var j = 0; j < 243; j++) {
@@ -1126,21 +1199,13 @@ module.exports = {
 }
 
 },{"../bundle/bundle":2,"../converter/converter":3,"../curl/curl":5,"../helpers/adder":6}],10:[function(require,module,exports){
+var Curl = require("../curl/curl");
 var Kerl = require("../kerl/kerl");
 var Converter = require("../converter/converter");
 var Bundle = require("../bundle/bundle");
 var add = require("../helpers/adder");
 var oldSigning = require("./oldSigning");
-
-var getSubseed = function(seed, index) {
-    var subseed = add( seed.slice( ), Converter.fromValue(index));
-
-    var kerl = new Kerl( );
-
-    kerl.initialize( );
-    kerl.absorb(subseed, 0, subseed.length);
-    kerl.squeeze(subseed, 0, subseed.length);
-}
+var errors = require("../../errors/inputErrors");
 
 /**
 *           Signing related functions
@@ -1152,11 +1217,16 @@ var key = function(seed, index, length) {
       seed.push(0);
     }
 
-    var subseed = getSubseed(seed, index);
+    var indexTrits = Converter.fromValue( index );
+    var subseed = add( seed.slice( ), indexTrits );
 
     var kerl = new Kerl( );
 
     kerl.initialize( );
+    kerl.absorb(subseed, 0, subseed.length);
+    kerl.squeeze(subseed, 0, subseed.length);
+
+    kerl.reset( );
     kerl.absorb(subseed, 0, subseed.length);
 
     var key = [], offset = 0, buffer = [];
@@ -1196,7 +1266,7 @@ var digests = function(key) {
                 var kKerl = new Kerl();
                 kKerl.initialize();
                 kKerl.absorb(buffer, 0, buffer.length);
-                kKerl.squeeze(buffer, 0, kKerl.HASH_LENGTH);
+                kKerl.squeeze(buffer, 0, Curl.HASH_LENGTH);
             }
 
             for (var k = 0; k < 243; k++) {
@@ -1209,7 +1279,7 @@ var digests = function(key) {
 
         kerl.initialize();
         kerl.absorb(keyFragment, 0, keyFragment.length);
-        kerl.squeeze(buffer, 0, kerl.HASH_LENGTH);
+        kerl.squeeze(buffer, 0, Curl.HASH_LENGTH);
 
         for (var j = 0; j < 243; j++) {
 
@@ -1231,7 +1301,7 @@ var address = function(digests) {
 
     kerl.initialize();
     kerl.absorb(digests, 0, digests.length);
-    kerl.squeeze(addressTrits, 0, kerl.HASH_LENGTH);
+    kerl.squeeze(addressTrits, 0, Curl.HASH_LENGTH);
 
     return addressTrits;
 }
@@ -1257,13 +1327,13 @@ var digest = function(normalizedBundleFragment, signatureFragment) {
 
             jKerl.initialize();
             jKerl.absorb(buffer, 0, buffer.length);
-            jKerl.squeeze(buffer, 0, jKerl.HASH_LENGTH);
+            jKerl.squeeze(buffer, 0, Curl.HASH_LENGTH);
         }
 
         kerl.absorb(buffer, 0, buffer.length);
     }
 
-    kerl.squeeze(buffer, 0, kerl.HASH_LENGTH);
+    kerl.squeeze(buffer, 0, Curl.HASH_LENGTH);
     return buffer;
 }
 
@@ -1286,7 +1356,7 @@ var signatureFragment = function(normalizedBundleFragment, keyFragment) {
             kerl.initialize();
             kerl.reset();
             kerl.absorb(hash, 0, hash.length);
-            kerl.squeeze(hash, 0, kerl.HASH_LENGTH);
+            kerl.squeeze(hash, 0, Curl.HASH_LENGTH);
         }
 
         for (var j = 0; j < 243; j++) {
@@ -1303,6 +1373,9 @@ var signatureFragment = function(normalizedBundleFragment, keyFragment) {
 *
 **/
 var validateSignatures = function(expectedAddress, signatureFragments, bundleHash) {
+    if (!bundleHash) {
+        throw errors.invalidBundleHash();
+    }
 
     var self = this;
     var bundle = new Bundle();
@@ -1330,39 +1403,11 @@ var validateSignatures = function(expectedAddress, signatureFragments, bundleHas
 
     var address = Converter.trytes(self.address(digests));
 
-    var validAddress = (expectedAddress === address);
-
-    // if signature is valid, return already 
-    if (validAddress) return validAddress;
-
-
-    /**
-
-        Validate Curl-based signatures as failover
-
-    **/
-
-    // Get digests
-    var curlDigests = [];
-
-    for (var i = 0; i < signatureFragments.length; i++) {
-
-        var digestBuffer = oldSigning.digest(normalizedBundleFragments[i % 3], Converter.trits(signatureFragments[i]));
-
-        for (var j = 0; j < 243; j++) {
-
-            curlDigests[i * 243 + j] = digestBuffer[j]
-        }
-    }
-
-    var curlAddress = Converter.trytes(oldSigning.address(curlDigests));
-
-    return (expectedAddress === curlAddress);
+    return (expectedAddress === address);
 }
 
 
 module.exports = {
-    subseed             : getSubseed,
     key                 : key,
     digests             : digests,
     address             : address,
@@ -1371,7 +1416,7 @@ module.exports = {
     validateSignatures  : validateSignatures
 }
 
-},{"../bundle/bundle":2,"../converter/converter":3,"../helpers/adder":6,"../kerl/kerl":8,"./oldSigning":9}],11:[function(require,module,exports){
+},{"../../errors/inputErrors":11,"../bundle/bundle":2,"../converter/converter":3,"../curl/curl":5,"../helpers/adder":6,"../kerl/kerl":8,"./oldSigning":9}],11:[function(require,module,exports){
 
 module.exports = {
 
@@ -1420,14 +1465,17 @@ module.exports = {
   bundle: require('./crypto/bundle/bundle'),
   converter: require('./crypto/converter/converter'),
   signing: require('./crypto/signing/signing'),
+  oldSigning: require('./crypto/signing/oldSigning'),
   hmac: require('./crypto/hmac/hmac'),
   multisig: require('./multisig/multisig'),
   utils: require("./utils/utils"),
-  valid: require("./errors/inputErrors")
+  valid: require("./errors/inputErrors"),
+  add: require("./crypto/helpers/adder")
 }
 
-},{"./crypto/bundle/bundle":2,"./crypto/converter/converter":3,"./crypto/curl/curl":5,"./crypto/hmac/hmac":7,"./crypto/kerl/kerl":8,"./crypto/signing/signing":10,"./errors/inputErrors":11,"./multisig/multisig":14,"./utils/utils":18}],13:[function(require,module,exports){
+},{"./crypto/bundle/bundle":2,"./crypto/converter/converter":3,"./crypto/curl/curl":5,"./crypto/helpers/adder":6,"./crypto/hmac/hmac":7,"./crypto/kerl/kerl":8,"./crypto/signing/oldSigning":9,"./crypto/signing/signing":10,"./errors/inputErrors":11,"./multisig/multisig":14,"./utils/utils":18}],13:[function(require,module,exports){
 var Converter      =  require('../crypto/converter/converter');
+var Curl           =  require('../crypto/curl/curl');
 var Kerl           =  require('../crypto/kerl/kerl');
 var Signing        =  require('../crypto/signing/signing');
 var Utils          =  require('../utils/utils');
@@ -1503,7 +1551,7 @@ Address.prototype.finalize = function (digest) {
 
     // Squeeze the address trits
     var addressTrits = [];
-    this._kerl.squeeze(addressTrits, 0, this._kerl.HASH_LENGTH);
+    this._kerl.squeeze(addressTrits, 0, Curl.HASH_LENGTH);
 
     // Convert trits into trytes and return the address
     return Converter.trytes(addressTrits);
@@ -1512,17 +1560,22 @@ Address.prototype.finalize = function (digest) {
 
 module.exports = Address;
 
-},{"../crypto/converter/converter":3,"../crypto/kerl/kerl":8,"../crypto/signing/signing":10,"../utils/inputValidator":17,"../utils/utils":18}],14:[function(require,module,exports){
+},{"../crypto/converter/converter":3,"../crypto/curl/curl":5,"../crypto/kerl/kerl":8,"../crypto/signing/signing":10,"../utils/inputValidator":17,"../utils/utils":18}],14:[function(require,module,exports){
 var Signing         =  require('../crypto/signing/signing');
 var Converter       =  require('../crypto/converter/converter');
 var Kerl            =  require('../crypto/kerl/kerl');
+var Curl            =  require('../crypto/curl/curl');
 var Bundle          =  require('../crypto/bundle/bundle');
 var Utils           =  require('../utils/utils');
 var inputValidator  =  require('../utils/inputValidator');
 var errors          =  require('../errors/inputErrors');
 var Address         =  require('./address');
 
-var Multisig = {};
+function Multisig(provider) {
+
+    this._makeRequest = provider;
+}
+
 
 /**
 *   Gets the key value of a seed
@@ -1581,7 +1634,7 @@ Multisig.validateAddress = function(multisigAddress, digests) {
 
     // Squeeze address trits
     var addressTrits = [];
-    kerl.squeeze(addressTrits, 0, kerl.HASH_LENGTH);
+    kerl.squeeze(addressTrits, 0, Curl.HASH_LENGTH);
 
     // Convert trits into trytes and return the address
     return Converter.trytes(addressTrits) === multisigAddress;
@@ -1596,12 +1649,13 @@ Multisig.validateAddress = function(multisigAddress, digests) {
 *   @param {object} input the input addresses as well as the securitySum, and balance
 *                   where `address` is the input multisig address
 *                   and `securitySum` is the sum of security levels used by all co-signers
-*                   and `balance` is the expected balance
+*                   and `balance` is the expected balance, if you wish to override getBalances
 *   @param {string} remainderAddress Has to be generated by the cosigners before initiating the transfer, can be null if fully spent
 *   @param {object} transfers
+*   @param {function} callback
 *   @returns {array} Array of transaction objects
 **/
-Multisig.initiateTransfer = function(input, remainderAddress, transfers) {
+Multisig.initiateTransfer = function(input, remainderAddress, transfers, callback) {
 
     var self = this;
 
@@ -1615,22 +1669,22 @@ Multisig.initiateTransfer = function(input, remainderAddress, transfers) {
 
     // Input validation of transfers object
     if (!inputValidator.isTransfersArray(transfers)) {
-        return errors.invalidTransfers();
+        return callback(errors.invalidTransfers());
     }
 
     // check if int
     if (!inputValidator.isValue(input.securitySum)) {
-        return errors.invalidInputs();
+        return callback(errors.invalidInputs());
     }
 
     // validate input address
     if (!inputValidator.isAddress(input.address)) {
-        return errors.invalidTrytes();
+        return callback(errors.invalidTrytes());
     }
 
     // validate remainder address
     if (remainderAddress && !inputValidator.isAddress(remainderAddress)) {
-        return errors.invalidTrytes();
+        return callback(errors.invalidTrytes());
     }
 
     // Create a new bundle
@@ -1707,42 +1761,59 @@ Multisig.initiateTransfer = function(input, remainderAddress, transfers) {
     // Get inputs if we are sending tokens
     if (totalValue) {
 
-        if (input.balance > 0) {
+        function createBundle(totalBalance, callback) {
+            if (totalBalance > 0) {
 
-            var toSubtract = 0 - input.balance;
-            var timestamp = Math.floor(Date.now() / 1000);
+                var toSubtract = 0 - totalBalance;
+                var timestamp = Math.floor(Date.now() / 1000);
 
-            // Add input as bundle entry
-            // Only a single entry, signatures will be added later
-            bundle.addEntry(input.securitySum, input.address, toSubtract, tag, timestamp);
-        }
-
-        if (totalValue > input.balance) {
-            return new Error("Not enough balance.");
-        }
-
-
-        // If there is a remainder value
-        // Add extra output to send remaining funds to
-        if (input.balance > totalValue) {
-
-            var remainder = input.balance - totalValue;
-
-            // Remainder bundle entry if necessary
-            if (!remainderAddress) {
-                return new Error("No remainder address defined");
+                // Add input as bundle entry
+                // Only a single entry, signatures will be added later
+                bundle.addEntry(input.securitySum, input.address, toSubtract, tag, timestamp);
             }
 
-            bundle.addEntry(1, remainderAddress, remainder, tag, timestamp);
+            if (totalValue > totalBalance) {
+                return callback(new Error("Not enough balance."));
+            }
+
+
+            // If there is a remainder value
+            // Add extra output to send remaining funds to
+            if (totalBalance > totalValue) {
+
+                var remainder = totalBalance - totalValue;
+
+                // Remainder bundle entry if necessary
+                if (!remainderAddress) {
+                    return callback(new Error("No remainder address defined"));
+                }
+
+                bundle.addEntry(1, remainderAddress, remainder, tag, timestamp);
+            }
+
+            bundle.finalize();
+            bundle.addTrytes(signatureFragments);
+
+            return callback(null, bundle.bundle);
+        };
+
+        if (input.balance) {
+          createBundle(input.balance, callback);
+        } else {
+          var command = {
+              'command': 'getBalances',
+              'addresses': new Array(input.address),
+              'threshold': 100
+          }
+          self._makeRequest.send(command, function(e, balances) {
+              if (e) return callback(e);
+              createBundle(parseInt(balances.balances[0]), callback);
+          });
         }
 
-        bundle.finalize();
-        bundle.addTrytes(signatureFragments);
-
-        return bundle.bundle;
     } else {
 
-        return new Error("Invalid value transfer: the transfer does not require a signature.");
+        return callback(new Error("Invalid value transfer: the transfer does not require a signature."));
     }
 
 }
@@ -1756,9 +1827,10 @@ Multisig.initiateTransfer = function(input, remainderAddress, transfers) {
 *   @param {int} cosignerIndex
 *   @param {string} inputAddress
 *   @param {string} key
+*   @param {function} callback
 *   @returns {array} trytes Returns bundle trytes
 **/
-Multisig.addSignature = function(bundleToSign, inputAddress, key) {
+Multisig.addSignature = function(bundleToSign, inputAddress, key, callback) {
 
     var bundle = new Bundle();
     bundle.bundle = bundleToSign;
@@ -1832,12 +1904,12 @@ Multisig.addSignature = function(bundleToSign, inputAddress, key) {
         }
     }
 
-    return bundle.bundle;
+    return callback(null, bundle.bundle);
 }
 
 module.exports = Multisig;
 
-},{"../crypto/bundle/bundle":2,"../crypto/converter/converter":3,"../crypto/kerl/kerl":8,"../crypto/signing/signing":10,"../errors/inputErrors":11,"../utils/inputValidator":17,"../utils/utils":18,"./address":13}],15:[function(require,module,exports){
+},{"../crypto/bundle/bundle":2,"../crypto/converter/converter":3,"../crypto/curl/curl":5,"../crypto/kerl/kerl":8,"../crypto/signing/signing":10,"../errors/inputErrors":11,"../utils/inputValidator":17,"../utils/utils":18,"./address":13}],15:[function(require,module,exports){
 //
 //  Conversion of ascii encoded bytes to trytes.
 //  Input is a string (can be stringified JSON object), return value is Trytes
@@ -2213,7 +2285,7 @@ var isTransfersArray = function(transfersArray) {
         }
 
         // Check if tag is correct trytes of {0,27} trytes
-        var tag = transfer.tag;
+        var tag = transfer.tag || transfer.obsoleteTag;
         if (!isTrytes(tag, "0,27")) {
             return false;
         }
@@ -2342,7 +2414,7 @@ var isArrayOfTxObjects = function(bundle) {
                 validator: isValue,
                 args: null
             }, {
-                key: 'tag',
+                key: 'obsoleteTag',
                 validator: isTrytes,
                 args: 27
             }, {
@@ -2370,9 +2442,25 @@ var isArrayOfTxObjects = function(bundle) {
                 validator: isHash,
                 args: null
             }, {
-                key: 'nonce',
-                validator: isHash,
+                key: 'tag',
+                validator: isTrytes,
+                args: 27
+            }, {
+                key: 'attachmentTimestamp',
+                validator: isValue,
                 args: null
+            }, {
+                key: 'attachmentTimestampLowerBound',
+                validator: isValue,
+                args: null
+            }, {
+                key: 'attachmentTimestampUpperBound',
+                validator: isValue,
+                args: null
+            }, {
+                key: 'nonce',
+                validator: isTrytes,
+                args: 27
             }
         ]
 
@@ -2587,7 +2675,7 @@ var addChecksum = function(inputValue, checksumLength, isAddress) {
         kerl.absorb(addressTrits, 0, addressTrits.length);
 
         // Squeeze checksum trits
-        kerl.squeeze(checksumTrits, 0, kerl.HASH_LENGTH);
+        kerl.squeeze(checksumTrits, 0, Curl.HASH_LENGTH);
 
         // First 9 trytes as checksum
         var checksum = Converter.trytes( checksumTrits ).substring( 81 - checksumLength, 81 );
@@ -2689,14 +2777,19 @@ var transactionObject = function(trytes) {
     thisTransaction.signatureMessageFragment = trytes.slice(0, 2187);
     thisTransaction.address = trytes.slice(2187, 2268);
     thisTransaction.value = Converter.value(transactionTrits.slice(6804, 6837));
-    thisTransaction.tag = trytes.slice(2295, 2322);
+    thisTransaction.obsoleteTag = trytes.slice(2295, 2322);
     thisTransaction.timestamp = Converter.value(transactionTrits.slice(6966, 6993));
     thisTransaction.currentIndex = Converter.value(transactionTrits.slice(6993, 7020));
     thisTransaction.lastIndex = Converter.value(transactionTrits.slice(7020, 7047));
     thisTransaction.bundle = trytes.slice(2349, 2430);
     thisTransaction.trunkTransaction = trytes.slice(2430, 2511);
     thisTransaction.branchTransaction = trytes.slice(2511, 2592);
-    thisTransaction.nonce = trytes.slice(2592, 2673);
+
+    thisTransaction.tag = trytes.slice(2592, 2619);
+    thisTransaction.attachmentTimestamp = Converter.value(transactionTrits.slice(7857, 7884));
+    thisTransaction.attachmentTimestampLowerBound = Converter.value(transactionTrits.slice(7884, 7911));
+    thisTransaction.attachmentTimestampUpperBound = Converter.value(transactionTrits.slice(7911, 7938));
+    thisTransaction.nonce = trytes.slice(2646, 2673);
 
     return thisTransaction;
 }
@@ -2730,16 +2823,37 @@ var transactionTrytes = function(transaction) {
         lastIndexTrits[lastIndexTrits.length] = 0;
     }
 
+    var attachmentTimestampTrits = Converter.trits(transaction.attachmentTimestamp || 0);
+    while (attachmentTimestampTrits.length < 27) {
+        attachmentTimestampTrits[attachmentTimestampTrits.length] = 0;
+    }
+
+    var attachmentTimestampLowerBoundTrits = Converter.trits(transaction.attachmentTimestampLowerBound || 0);
+    while (attachmentTimestampLowerBoundTrits.length < 27) {
+        attachmentTimestampLowerBoundTrits[attachmentTimestampLowerBoundTrits.length] = 0;
+    }
+
+    var attachmentTimestampUpperBoundTrits = Converter.trits(transaction.attachmentTimestampUpperBound || 0);
+    while (attachmentTimestampUpperBoundTrits.length < 27) {
+        attachmentTimestampUpperBoundTrits[attachmentTimestampUpperBoundTrits.length] = 0;
+    }
+
+    transaction.tag = transaction.tag || transaction.obsoleteTag;
+
     return transaction.signatureMessageFragment
     + transaction.address
     + Converter.trytes(valueTrits)
-    + transaction.tag
+    + transaction.obsoleteTag
     + Converter.trytes(timestampTrits)
     + Converter.trytes(currentIndexTrits)
     + Converter.trytes(lastIndexTrits)
     + transaction.bundle
     + transaction.trunkTransaction
     + transaction.branchTransaction
+    + transaction.tag
+    + Converter.trytes(attachmentTimestampTrits)
+    + Converter.trytes(attachmentTimestampLowerBoundTrits)
+    + Converter.trytes(attachmentTimestampUpperBoundTrits)
     + transaction.nonce;
 }
 
@@ -2824,6 +2938,10 @@ var validateSignatures = function(signedBundle, inputAddress) {
         }
     }
 
+    if (!bundleHash) {
+        return false;
+    }
+
     return Signing.validateSignatures(inputAddress, signatureFragments, bundleHash);
 }
 
@@ -2892,7 +3010,7 @@ var isBundle = function(bundle) {
     if (totalSum !== 0) return false;
 
     // get the bundle hash from the bundle transactions
-    kerl.squeeze(bundleFromTxs, 0, kerl.HASH_LENGTH);
+    kerl.squeeze(bundleFromTxs, 0, Curl.HASH_LENGTH);
     var bundleFromTxs = Converter.trytes(bundleFromTxs);
 
     // Check if bundle hash is the same as returned by tx object
@@ -2924,8 +3042,7 @@ module.exports = {
     fromTrytes          : ascii.fromTrytes,
     extractJson         : extractJson,
     validateSignatures  : validateSignatures,
-    isBundle            : isBundle,
-    inputValidator      : inputValidator
+    isBundle            : isBundle
 }
 
 },{"../crypto/converter/converter":3,"../crypto/curl/curl":5,"../crypto/kerl/kerl":8,"../crypto/signing/signing":10,"./asciiToTrytes":15,"./extractJson":16,"./inputValidator":17,"crypto-js":27}],19:[function(require,module,exports){

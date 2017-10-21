@@ -1,6 +1,6 @@
 {
   "name": "iota.crypto.js",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Javascript Crypto Library for IOTA",
   "main": "./lib/iota.crypto.js",
   "scripts": {
